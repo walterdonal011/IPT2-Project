@@ -6,27 +6,27 @@ const router = createRouter({
         {
             path: '/guest',
             name: 'guest',
-            component: import('@/layouts/GuestLayout.vue'),
+            component: () => import('@/layouts/GuestLayout.vue'),
             children: [
                 {
                     path: 'login',
                     name: 'login',
-                    component: import('@/views/guest/LoginView.vue'),
+                    component: () => import('@/views/guest/LoginView.vue'),
                 },
                 {
                     path: 'register',
                     name: 'register',
-                    component: import('@/views/guest/RegisterView.vue'),
+                    component: () => import('@/views/guest/RegisterView.vue'),
                 },
             ],
         },
         {
-            path: '/',
+            path: '/dashboard',
             name: 'dashboard',
-            component: import('@/layouts/AppLayout.vue'),
+            component: () => import('@/layouts/AppLayout.vue'),
             children: [
                 {
-                    path: '/',
+                    path: '/feed',
                     name: 'feed',
                     component: import('@/views/authenticated/FeedView.vue'),
                 },

@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
-import '@/style.css'
 import { createPinia } from 'pinia'
+import '@/style.css'
+import 'vue3-toastify/dist/index.css'
 
 import App from './App.vue'
 import router from './router'

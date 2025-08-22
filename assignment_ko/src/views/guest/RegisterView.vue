@@ -16,7 +16,8 @@ const isSubmitting = ref(false)
 
 const register = async () => {
     if (password.value != confirmPassword.value) {
-        return
+      toast.error('Passwords do not match')
+      return
     }
 
     isSubmitting.value = true
@@ -141,7 +142,7 @@ const register = async () => {
                             <option value="social_work">Social Work</option>
                         </select>
                     </div>
-                    <div>
+                    <!-- <div>
                         <label for="major-address" class="sr-only">Major address</label>
                         <input
                             v-model="major"
@@ -153,7 +154,7 @@ const register = async () => {
                             class="appearance-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
                             placeholder="major address"
                         />
-                    </div>
+                    </div> -->
                     <div>
                         <label for="role" class="sr-only">Role</label>
                         <select
