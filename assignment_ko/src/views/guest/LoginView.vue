@@ -1,23 +1,33 @@
 <script setup>
 import { ref } from 'vue'
+import { auth } from '@/config/firebaseConfig'
+import { signInWithEmailAndPassword } from 'firebase/auth'
 import { useRouter } from 'vue-router'
+import { toast } from 'vue3-toastify'
 
 const router = useRouter()
-
-const username = ref('')
+const email = ref('')
 const password = ref('')
-const isRememberMe = ref(false)
+const rememberMe = ref(false)
 
-// login function
-
-const handleLogin = () => {
-    if (username.value != 'admin' || password.value != '123') {
-        console.error('Invalid credentials')
-        alert('Invalid credentials')
-        return
+const handleSubmit = async () => {
+    if (!email.value || !password.value) {
+        toast.error('Invalid email or password', {
+            autoClose: 1000,
+        })
     }
 
-    router.push('/')
+    // Check the credentials if correct
+    try {
+        const user = await signInWithEmailAndPassword(auth, email.value, password.value)
+        console.log(user)
+        toast.success('Login successfull')
+        router.push('/feed')
+    } catch (err) {
+        toast.error('No user found', {
+            autoClose: 1000,
+        })
+    }
 }
 </script>
 <template>
@@ -44,8 +54,8 @@ const handleLogin = () => {
                     <div>
                         <label for="email-address" class="sr-only">Email address</label>
                         <input
+                            v-model="email"
                             id="email-address"
-                            v-model="username"
                             name="email"
                             type="email"
                             autocomplete="email"
@@ -71,7 +81,7 @@ const handleLogin = () => {
                 <div class="flex items-center justify-between">
                     <div class="flex items-center">
                         <input
-                            v-model="isRememberMe"
+                            v-model="rememberMe"
                             id="remember-me"
                             name="remember-me"
                             type="checkbox"
@@ -89,7 +99,7 @@ const handleLogin = () => {
                 </div>
                 <div>
                     <button
-                        @click="handleLogin"
+                        @click="handleSubmit"
                         type="button"
                         class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
