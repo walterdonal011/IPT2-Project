@@ -15,6 +15,7 @@ import {
     arrayUnion,
     arrayRemove,
     increment,
+    getDoc,
 } from 'firebase/firestore'
 
 export class CommentService {
@@ -33,18 +34,48 @@ export class CommentService {
         return collection(db, 'posts', postId, this.commentsCollection, commentId, this.reactionsCollection)
     }
 
+    // Helper method to get user profile data
+    async getUserProfile(uid) {
+        try {
+            const userDoc = await getDoc(doc(db, 'users', uid))
+            return userDoc.exists() ? userDoc.data() : null
+        } catch (error) {
+            console.error('Error fetching user profile:', error)
+            return null
+        }
+    }
+
+    // Helper method to get display name from user profile
+    async getUserDisplayName(uid) {
+        const userProfile = await this.getUserProfile(uid)
+        if (userProfile) {
+            // Use firstName + lastName if available, otherwise fall back to displayName or email
+            if (userProfile.firstName || userProfile.lastName) {
+                return `${userProfile.firstName || ''} ${userProfile.lastName || ''}`.trim()
+            }
+            return userProfile.displayName || userProfile.email || 'Unknown User'
+        }
+        return 'Unknown User'
+    }
+
     // Add a comment to a post
     async addComment(postId, content, parentCommentId = null) {
         const user = auth.currentUser
         if (!user) throw new Error('You must be logged in to comment')
         if (!content.trim()) throw new Error('Comment cannot be empty')
 
+        // Get user profile data for proper name display
+        const userProfile = await this.getUserProfile(user.uid)
+        const displayName = userProfile && (userProfile.firstName || userProfile.lastName)
+            ? `${userProfile.firstName || ''} ${userProfile.lastName || ''}`.trim()
+            : userProfile?.displayName || user.displayName || user.email
+
         const commentData = {
             postId,
             parentCommentId, // null for top-level comments
             uid: user.uid,
             email: user.email,
-            displayName: user.displayName || user.email,
+            displayName: displayName,
             photoURL: user.photoURL,
             content: content.trim(),
             createdAt: serverTimestamp(),
@@ -75,12 +106,18 @@ export class CommentService {
         if (!user) throw new Error('You must be logged in to reply')
         if (!content.trim()) throw new Error('Reply cannot be empty')
 
+        // Get user profile data for proper name display
+        const userProfile = await this.getUserProfile(user.uid)
+        const displayName = userProfile && (userProfile.firstName || userProfile.lastName)
+            ? `${userProfile.firstName || ''} ${userProfile.lastName || ''}`.trim()
+            : userProfile?.displayName || user.displayName || user.email
+
         const replyData = {
             postId,
             parentCommentId,
             uid: user.uid,
             email: user.email,
-            displayName: user.displayName || user.email,
+            displayName: displayName,
             photoURL: user.photoURL,
             content: content.trim(),
             createdAt: serverTimestamp(),
@@ -106,25 +143,45 @@ export class CommentService {
 
     // Listen to comments for a post (real-time)
     listenToComments(postId, callback) {
-        console.log('Setting up comment listener for post:', postId)
         const q = query(
             this.getCommentsCollection(postId),
-            where('parentCommentId', '==', null), // Only top-level comments
-            orderBy('createdAt', 'desc')
+            where('parentCommentId', '==', null) // Only top-level comments
+            // Removed orderBy to avoid index requirement
         )
         
         return onSnapshot(q, (snapshot) => {
-            console.log('Comment listener triggered, docs count:', snapshot.docs.length)
-            const comments = snapshot.docs.map(doc => {
+            const rawComments = snapshot.docs.map(doc => {
                 const data = doc.data()
-                console.log('Comment data:', data)
                 return {
                     id: doc.id,
                     ...data,
                     replies: [] // Will be populated separately
                 }
             })
-            callback(comments)
+
+            // Enrich with full names from user profiles when available
+            Promise.all(
+                rawComments.map(async (c) => {
+                    try {
+                        const name = await this.getUserDisplayName(c.uid)
+                        return { ...c, displayName: name }
+                    } catch {
+                        return c
+                    }
+                })
+            ).then((comments) => {
+                // Sort comments by createdAt in descending order (newest first)
+                comments.sort((a, b) => {
+                    const aTime = a.createdAt?.toDate?.() || new Date(a.createdAt || 0)
+                    const bTime = b.createdAt?.toDate?.() || new Date(b.createdAt || 0)
+                    return bTime - aTime
+                })
+
+                callback(comments)
+            }).catch(() => {
+                // Fallback to raw comments if enrichment fails
+                callback(rawComments)
+            })
         }, (error) => {
             console.error('Comment listener error:', error)
         })
@@ -132,24 +189,43 @@ export class CommentService {
 
     // Listen to replies for a specific comment
     listenToReplies(postId, parentCommentId, callback) {
-        console.log('Setting up reply listener for comment:', parentCommentId, 'in post:', postId)
         const q = query(
             this.getCommentsCollection(postId),
-            where('parentCommentId', '==', parentCommentId),
-            orderBy('createdAt', 'asc')
+            where('parentCommentId', '==', parentCommentId)
+            // Removed orderBy to avoid index requirement
         )
         
         return onSnapshot(q, (snapshot) => {
-            console.log('Reply listener triggered for comment', parentCommentId, 'docs count:', snapshot.docs.length)
-            const replies = snapshot.docs.map(doc => {
+            const rawReplies = snapshot.docs.map(doc => {
                 const data = doc.data()
-                console.log('Reply data:', data)
                 return {
                     id: doc.id,
                     ...data
                 }
             })
-            callback(replies)
+
+            // Enrich with full names
+            Promise.all(
+                rawReplies.map(async (r) => {
+                    try {
+                        const name = await this.getUserDisplayName(r.uid)
+                        return { ...r, displayName: name }
+                    } catch {
+                        return r
+                    }
+                })
+            ).then((replies) => {
+                // Sort replies by createdAt in ascending order (oldest first)
+                replies.sort((a, b) => {
+                    const aTime = a.createdAt?.toDate?.() || new Date(a.createdAt || 0)
+                    const bTime = b.createdAt?.toDate?.() || new Date(b.createdAt || 0)
+                    return aTime - bTime
+                })
+
+                callback(replies)
+            }).catch(() => {
+                callback(rawReplies)
+            })
         }, (error) => {
             console.error('Reply listener error:', error)
         })

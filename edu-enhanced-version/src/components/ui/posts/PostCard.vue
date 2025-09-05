@@ -27,7 +27,9 @@ const replyText = ref('')
 const currentUser = computed(() => {
     if (!authStore.me) return null
     return {
-        name: authStore.me.displayName || authStore.me.email,
+        name: authStore.me.firstName || authStore.me.lastName
+            ? `${authStore.me.firstName || ''} ${authStore.me.lastName || ''}`.trim()
+            : authStore.me.displayName || authStore.me.email,
         photoUrl: authStore.me.photoURL || '/default-avatar.png',
         uid: authStore.me.uid,
         email: authStore.me.email
@@ -96,6 +98,16 @@ watch(() => props.post, (newPost) => {
     }
 }, { immediate: true })
 
+// Helper function to initialize comment user reactions
+function initializeCommentReactions(comment) {
+    if (currentUser.value && comment.userReactions) {
+        comment.userReaction = comment.userReactions[currentUser.value.uid] || null
+    } else {
+        comment.userReaction = null
+    }
+    return comment
+}
+
 // Functions
 async function setReaction(type) {
     if (!currentUser.value) return
@@ -104,14 +116,14 @@ async function setReaction(type) {
         await postService.addReaction(props.post.id, type)
         
         // Optimistic update
-    if (userReaction.value === type) {
-        reactions.value[type]--
-        userReaction.value = null
-    } else {
-        if (userReaction.value) reactions.value[userReaction.value]--
-        reactions.value[type]++
-        userReaction.value = type
-    }
+        if (userReaction.value === type) {
+            reactions.value[type]--
+            userReaction.value = null
+        } else {
+            if (userReaction.value) reactions.value[userReaction.value]--
+            reactions.value[type]++
+            userReaction.value = type
+        }
     } catch (error) {
         console.error('Error setting reaction:', error)
     }
@@ -146,50 +158,58 @@ async function setCommentReaction(commentId, type, isReply = false, parentId = n
 
 function openCommentModal() {
     showCommentModal.value = true
-    loadComments()
+    // Comments are already loaded automatically
 }
 
 function closeCommentModal() {
     showCommentModal.value = false
     replyingTo.value = null
     replyText.value = ''
-    // Clean up listeners
-    if (unsubscribeComments.value) {
-        unsubscribeComments.value()
-        unsubscribeComments.value = null
-    }
-    Object.values(unsubscribeReplies.value).forEach(unsub => unsub())
-    unsubscribeReplies.value = {}
+    // Don't clean up listeners since comments should stay loaded
 }
 
 async function loadComments() {
     if (loading.value) return
     
-    console.log('Loading comments for post:', props.post.id)
     loading.value = true
     try {
         // Listen to top-level comments
         unsubscribeComments.value = commentService.listenToComments(props.post.id, (topLevelComments) => {
-            console.log('Received comments in PostCard:', topLevelComments)
-            
             // Filter out optimistic comments and merge with real ones
-            const realComments = topLevelComments.map(comment => ({
-                ...comment,
-                replies: comment.replies || []
-            }))
+            const realComments = topLevelComments.map(comment => {
+                const processedComment = {
+                    ...comment,
+                    replies: comment.replies || []
+                }
+                // Initialize user reaction for each comment
+                return initializeCommentReactions(processedComment)
+            })
             
             // Keep optimistic comments that aren't yet in real data
             const optimisticComments = comments.value.filter(c => c.isOptimistic)
             const existingRealIds = new Set(realComments.map(c => c.id))
             const stillOptimistic = optimisticComments.filter(c => !existingRealIds.has(c.id))
             
-            // Merge real comments with still-optimistic ones
-            comments.value = [...realComments, ...stillOptimistic]
-            console.log('Updated comments array:', comments.value)
+            // Preserve existing replies when updating comments
+            const commentsWithPreservedReplies = realComments.map(newComment => {
+                const existingComment = comments.value.find(c => c.id === newComment.id && !c.isOptimistic)
+                if (existingComment && existingComment.replies) {
+                    return {
+                        ...newComment,
+                        replies: existingComment.replies // Preserve existing replies
+                    }
+                }
+                return newComment
+            })
             
-            // Load replies for each real comment
+            // Merge real comments with still-optimistic ones
+            comments.value = [...commentsWithPreservedReplies, ...stillOptimistic]
+            
+            // Load replies for each real comment automatically (only if not already loaded)
             realComments.forEach(comment => {
-                loadReplies(comment.id)
+                if (!unsubscribeReplies.value[comment.id]) {
+                    loadReplies(comment.id)
+                }
             })
         })
     } catch (error) {
@@ -206,18 +226,14 @@ function loadReplies(commentId) {
         props.post.id, 
         commentId, 
         (replies) => {
-            console.log('Received replies for comment', commentId, ':', replies)
             const comment = comments.value.find(c => c.id === commentId)
             if (comment) {
-                // Only update if we don't have any optimistic replies
-                // This prevents overwriting our direct updates
-                const hasOptimisticReplies = comment.replies.some(r => r.isOptimistic)
-                if (!hasOptimisticReplies) {
-                    comment.replies = replies
-                    console.log('Updated replies for comment', commentId, ':', comment.replies)
-                } else {
-                    console.log('Skipping reply update due to optimistic replies')
-                }
+                // Preserve optimistic replies when updating
+                const optimisticReplies = comment.replies.filter(r => r.isOptimistic)
+                const realReplies = replies.map(reply => initializeCommentReactions(reply))
+                
+                // Merge real replies with optimistic ones
+                comment.replies = [...realReplies, ...optimisticReplies]
             }
         }
     )
@@ -252,7 +268,8 @@ async function submitComment() {
         userReactions: {},
         repliesCount: 0,
         replies: [],
-        isOptimistic: true
+        isOptimistic: true,
+        userReaction: null // Initialize user reaction
     }
     
     // Add to UI immediately
@@ -260,7 +277,6 @@ async function submitComment() {
     
     try {
         const commentId = await commentService.addComment(props.post.id, commentText)
-        console.log('Comment added successfully:', commentId)
         
         // Create the real comment object to replace the optimistic one
         const realComment = {
@@ -285,7 +301,8 @@ async function submitComment() {
             userReactions: {},
             repliesCount: 0,
             replies: [],
-            isOptimistic: false
+            isOptimistic: false,
+            userReaction: null // Initialize user reaction
         }
         
         // Replace optimistic comment with real one immediately
@@ -293,8 +310,6 @@ async function submitComment() {
         if (optimisticIndex !== -1) {
             comments.value.splice(optimisticIndex, 1, realComment)
         }
-        
-        console.log('Replaced optimistic comment with real comment:', realComment)
         
     } catch (error) {
         console.error('Error submitting comment:', error)
@@ -351,7 +366,8 @@ async function submitReply() {
             angry: 0,
         },
         userReactions: {},
-        isOptimistic: true
+        isOptimistic: true,
+        userReaction: null // Initialize user reaction
     }
     
     // Add to UI immediately
@@ -359,7 +375,6 @@ async function submitReply() {
     
     try {
         const replyId = await commentService.addReply(props.post.id, parentCommentId, replyTextValue)
-        console.log('Reply added successfully:', replyId)
         
         // Create the real reply object to replace the optimistic one
         const realReply = {
@@ -382,7 +397,8 @@ async function submitReply() {
                 angry: 0,
             },
             userReactions: {},
-            isOptimistic: false
+            isOptimistic: false,
+            userReaction: null // Initialize user reaction
         }
         
         // Replace optimistic reply with real one immediately
@@ -390,8 +406,6 @@ async function submitReply() {
         if (optimisticIndex !== -1) {
             parentComment.replies.splice(optimisticIndex, 1, realReply)
         }
-        
-        console.log('Replaced optimistic reply with real reply:', realReply)
         
     } catch (error) {
         console.error('Error submitting reply:', error)
@@ -418,6 +432,11 @@ function getTopReaction(reactions) {
     if (sorted.length === 0) return null
     return reactionTypes.find(r => r.type === sorted[0][0])
 }
+
+// Load comments automatically when component mounts
+onMounted(() => {
+    loadComments()
+})
 
 // Cleanup on unmount
 onUnmounted(() => {
@@ -477,7 +496,7 @@ onUnmounted(() => {
                                 {{ reactionTypes.find((r) => r.type === userReaction)?.label }}
                             </span>
                             <span>{{ userReaction || 'React' }}</span>
-                            <span class="ml-1"> (1) </span>
+                            <span v-if="getTotalReactions(reactions) > 0" class="ml-1"> ({{ getTotalReactions(reactions) }}) </span>
                         </button>
 
                         <!-- Picker -->

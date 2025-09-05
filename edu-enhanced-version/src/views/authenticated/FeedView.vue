@@ -28,14 +28,11 @@ const content = ref('')
 
 const createPost = async () => {
     const user = auth.currentUser
-    console.log('User Details', user)
     if (!user) {
-        console.log('You must be logged in to post')
         return
     }
 
     if (!content.value.trim()) {
-        console.log('No content')
         return
     }
 
@@ -64,7 +61,6 @@ const fetchUserDetails = async (userId) => {
 
         if (docSnap.exists()) {
             userDetails.value = docSnap.data()
-            console.log(userDetails.value)
         } else {
             userDetails.value = null
         }
@@ -107,12 +103,10 @@ onMounted(() => {
     // ✅ Wait for Firebase to restore the user session
     onAuthStateChanged(auth, (user) => {
         if (user) {
-            console.log('User is logged in:', user)
             currentUser.value = user
             listenToPosts()
             fetchUserDetails(user.uid)
         } else {
-            console.log('No user logged in')
             currentUser.value = null
         }
     })
